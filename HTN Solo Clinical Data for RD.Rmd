@@ -1,0 +1,121 @@
+---
+title: "HTN Solo Clinical Data for RD"
+date: "9/3/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+#----library----------------------------------------
+
+library(odbc)
+library(DBI)
+library(dplyr)
+library(plyr)
+library(haven)
+library(openxlsx)
+library(sqldf)
+library(RSQLite)
+library(data.table)
+library(operators)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(DT)
+
+#----
+
+con2 <- dbConnect(odbc(),
+                 Driver = "PostgreSQL",
+                 Server = "10.1.49.12",
+                 Database = "xt_recor_radiance_r",
+                 UID = "xt_recor_radiance_r_rouser",
+                 PWD = "koeq.h8DBgb",
+                 Port = 5118) 
+
+
+demographics_sas <- dbReadTable(con2, "tbt_demographics")
+bp_office_sas <- dbReadTable(con2, "tbt_bp_office")
+bp_office_v3_sas <- dbReadTable(con2, "tbt_bp_office_v3")
+visit_p1_sas <- dbReadTable(con2, "tbt_visit_info_p1")
+visit_p2_sas <- dbReadTable(con2, "tbt_visit_info_p2")
+visit_co_base_sas <- dbReadTable(con2, "tbt_visit_info_co_base")
+visit_v1_sas <- dbReadTable(con2, "tbt_visit_info_v1")
+visit_v4_sas <- dbReadTable(con2, "tbt_visit_info_v4")
+generator_sas <- dbReadTable(con2, "tbt_paradise_generator")
+treatment_sas <- dbReadTable(con2, "tbt_treatment_details")
+renal_v2_sas <- dbReadTable(con2, "tbt_renal_anatomy2")
+
+
+```
+
+Description: This Report shows BP and Renal information for Procedure patients.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+demographics_sas <- filter(demographics_sas, is.na(dec__i_cohort_trio))
+bp_office_sas <- filter(bp_office_sas, studyeventoid == "e.baseline_v1")
+bp_office_v3_sas <- filter(bp_office_v3_sas, studyeventoid == "e.fu_v3")
+
+demographics <- select(demographics_sas, "supplementalid", "dec__i_gender", "i_age" )
+visit_p1 <- select(visit_p1_sas,"supplementalid","studyeventoid","Procedure Date" = "i_date_p1")
+visit_v1 <- select(visit_v1_sas,"supplementalid","Baseline Date" = "i_date_v1")
+visit_p2 <- select(visit_p2_sas,"supplementalid","studyeventoid","Procedure Date" = "i_date_p2")
+visit_co_base <- select(visit_co_base_sas,"supplementalid","Baseline Date" = "i_date_co_baseline")
+visit_v4 <- select(visit_v4_sas,"supplementalid","Date" = "i_date_v4")
+bp_office <- select(bp_office_sas,"supplementalid", "i_bp_avg_sys", "i_bp_avg_dia", "i_pulse_avg")
+bp_office_v3 <- select(bp_office_v3_sas,"supplementalid","3 Month Sys" = "i_bp_avg_sys","3 Month Dia" = "i_bp_avg_dia","3 Month Pulse" = "i_pulse_avg")
+generator <- select(generator_sas, "supplementalid", "i_para_gen_serial")
+treatment <- select(treatment_sas,"supplementalid", "i_emission_left", "i_emission_right", "i_emission_br_left", "i_emission_br_right", "i_emission_acc_left", "i_emissions_acc_right", "i_emissions_total")
+renal_v2 <- select(renal_v2_sas,"supplementalid","studyeventoid","i_renal2_left_dia_min", "i_renal2_left_dia_max", "i_renal2_left_lgth_min", "i_renal2_rght_dia_min", "i_renal2_rght_dia_max", "i_renal2_rght_lgth_min", "i_renal2_acc_l_dia_min", "i_renal2_acc_l_dia_max", "i_renal2_acc_r_dia_min", "i_renal2_acc_r_dia_max")
+
+treatment$i_emission_left <- as.integer(treatment$i_emission_left)
+treatment$i_emission_right <- as.integer(treatment$i_emission_right)
+treatment$i_emission_br_left <- as.integer(treatment$i_emission_br_left)
+treatment$i_emission_br_right <- as.integer(treatment$i_emission_br_right)
+treatment$i_emission_acc_left <- as.integer(treatment$i_emission_acc_left)
+treatment$i_emissions_acc_right <- as.integer(treatment$i_emissions_acc_right)
+
+treatment$i_emission_left[is.na(treatment$i_emission_left)] <- 0
+treatment$i_emission_right[is.na(treatment$i_emission_right)] <- 0
+treatment$i_emission_br_left[is.na(treatment$i_emission_br_left)] <- 0
+treatment$i_emission_br_right[is.na(treatment$i_emission_br_right)] <- 0
+treatment$i_emission_acc_left[is.na(treatment$i_emission_acc_left)] <- 0
+treatment$i_emissions_acc_right[is.na(treatment$i_emissions_acc_right)] <- 0
+
+
+visits_p <- rbind(visit_p1, visit_p2)
+visits_b <- rbind(visit_v1, visit_co_base)
+
+bp_office$`Baseline Pulse Pressure` <- bp_office$i_bp_avg_sys - bp_office$i_bp_avg_dia
+
+bp_office_v3$`3 Month Pulse Pressure` <- bp_office_v3$`3 Month Sys` - bp_office_v3$`3 Month Dia`
+
+treatment$`Total Left Emissions` <- treatment$i_emission_left + treatment$i_emission_br_left + treatment$i_emission_acc_left
+
+treatment$`Total Right Emissions` <- treatment$i_emission_right + treatment$i_emission_br_right + treatment$i_emissions_acc_right
+
+data <- visits_p %>% left_join(demographics, by = "supplementalid")
+data <- data %>% left_join(visits_b, by = "supplementalid")
+data <- data %>% left_join(bp_office, by = "supplementalid")
+data <- data %>% left_join(visit_v4, by = "supplementalid")
+data <- data %>% left_join(bp_office_v3, by = "supplementalid")
+data <- data %>% left_join(generator, by = "supplementalid")
+data <- data %>% left_join(treatment, by = "supplementalid")
+data <- data %>% left_join(renal_v2, by = c("supplementalid","studyeventoid") )
+
+data<- unique(data)
+
+data <- select(data, "Subject" = "supplementalid", "Sex" = "dec__i_gender", "Age" = "i_age", "Procedure Date", "Baseline Date","Baseline Sys" = "i_bp_avg_sys","Baseline Dia" = "i_bp_avg_dia","Baseline Pulse" = "i_pulse_avg", "Baseline Pulse Pressure","3 Month Date" = "Date", "3 Month Sys", "3 Month Dia", "3 Month Pulse", "3 Month Pulse Pressure", "Generator SN" = "i_para_gen_serial","Left Renal Emissions" = "i_emission_left", "Right Renal Emissions" = "i_emission_right","Left Renal Branch Emissions" = "i_emission_br_left","Right Renal Branch Emissions" = "i_emission_br_right","Left Renal Accessory Emissions" = "i_emission_acc_left","Right Renal Accessory Emissions" = "i_emissions_acc_right","Total Number of Sonifications" = "i_emissions_total", "Total Left Emissions", "Total Right Emissions","Min Dia Main Left" = "i_renal2_left_dia_min","Max Dia Main Left" = "i_renal2_left_dia_max","Length Left" = "i_renal2_left_lgth_min","Min Dia Main Right" = "i_renal2_rght_dia_min","Max Dia Main Right" = "i_renal2_rght_dia_max","Length Right" = "i_renal2_rght_lgth_min","Min Dia Accessory Left" = "i_renal2_acc_l_dia_min","Max Dia Accessory Left" = "i_renal2_acc_l_dia_max","Min Dia Accessory Right" = "i_renal2_acc_r_dia_min","Max Dia Accessory Right" = "i_renal2_acc_r_dia_max")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data %>%
+datatable(width = 'auto', class = 'cell-border compact stripe', rownames = F,extensions = 'Buttons',
+options = list(dom = 'Blfrtip',
+buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+lengthMenu = list(c(10,25,50,-1),
+c(10,25,50,"All"))))
+```
